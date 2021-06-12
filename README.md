@@ -1,7 +1,7 @@
 # Option Simple
 Semester Project 2021 - Programming
 
-The program aims to create a Graphical User Interface (GUI) that allows you to estimate the price of different options by choosing companies from over 20,000 possible choices. It is also possible to export daily stock prices and returns to an exce file.
+The program aims to create a Graphical User Interface (GUI) that allows you to estimate the price of different options by choosing companies from over 20,000 possible choices. It is also possible to export daily stock prices and returns to an excel file.
 
 
 ## Packages
