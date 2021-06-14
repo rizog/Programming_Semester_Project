@@ -20,3 +20,10 @@ The program aims to create a Graphical User Interface (GUI) that allows you to e
 All files must stay in the same folder for the proper functioning of the program.
 
 To run the program, you should only run de file main.py
+
+
+## Appendix
+
+The code "Appendix - ticker_cleaner.py" is a prepatory work for the project. 
+The goal is to filter the companies that have data available on yahoo finance. 
+Thus, we remove tickers of companies that have less than 100 days of historical data or that are not available by the data provider.
