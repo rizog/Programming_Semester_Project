@@ -1,24 +1,44 @@
 # -*- coding: utf-8 -*-
 """
-class UITicker
-Select ticker
+class Result
+Window 4
 """
 
+#### Import packages
+from datetime import date
+import dateutil.relativedelta
+from yahoofinancials import YahooFinancials
 import pandas as pd
+import pandas_datareader.data as web
 import numpy as np
 
-from PyQt5.QtGui import QFontDatabase, QFont, QIcon
-from PyQt5.QtCore import Qt, QSortFilterProxyModel
+import datetime as dt
+from datetime import date
+
+from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QFontDatabase, QFont
+from PyQt5.QtWidgets import (QPushButton, QVBoxLayout, 
+                             QHBoxLayout, QWidget, QFileDialog, QTabWidget, QWidget)
 from PyQt5.QtWidgets import QApplication, QMainWindow
-from PyQt5.QtWidgets import (QGroupBox,QPushButton, 
-                             QVBoxLayout, QHBoxLayout, QWidget)
 from PyQt5.QtWidgets import *
 
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT as NavigationToolbar
+from matplotlib.figure import Figure
 
-class UITicker(QWidget):
-    """ Window 2 class : ticker selection """
+from scipy.stats import norm
+import random
+from math import exp, sqrt, log
+
+from monte_carlo import monte_carlo_call, monte_carlo_put
+from BlackAndScholes import BS_call, BS_put
+
+##################################
+
+class UIWindow4(object):
+    """ Window 4 : display results and export data """
     
-    def setupUI(self, MainWindow):    
+    def setupUI(self, MainWindow):
         # window parameters
         self.title = "Option Pricing"
         self.iconName = "logo.png"
@@ -33,112 +53,273 @@ class UITicker(QWidget):
         MainWindow.setWindowTitle(self.title) # window title
         MainWindow.setWindowIcon(QIcon(self.iconName))
         
-        # dataframe w/ all tickers
-        try:
-            self.alltickers # if defined
-            
-        except:
-            # if not defined
-            self.alltickers = pd.read_excel("tickDisplay.xlsx", index_col=0)
         
+        # set the date today and x month ago
+        today = date.today()    
+        T = today + dateutil.relativedelta.relativedelta(months=self.valueSlider) # maturity
+
+        self.T_scaled = self.valueSlider / 12 # scale the maturity in years for the computations
+        # for example, 12 months = 1 year
+
         
-        # first horizontal box
-        hbox1      = QHBoxLayout() 
+        start = self.start_date.strftime("%Y-%m-%y") # to download data and compute volatility
+        today_str = today.strftime("%Y-%m-%y") # change date format
+        T_display = T.strftime("%b %y")
         
-        self.label_ticker = QLabel("Ticker : ") 
+        self.price_generator(start, today_str, "daily") # function to generate stock price
+        
+        # compute the  annualized daily returns volatility
+        self.vola = float(self.returns.std() * np.power(21*12, 0.5)) 
+        # assume 21 * 12 trading days
+        
+        ### risk-free rate for option estimation
+        start = dt.datetime(2021, 5, 5)
+        end = date.today()  
+        rf_prices = web.DataReader("^TNX", 'yahoo', start=start, end=end)['Adj Close']
+        # 10 year  US treasury yield
+        rf_prices = rf_prices.dropna()
+        self.rf = rf_prices[-1] / 100 # last value / 100, because quoted in percent
+        #print(self.rf)
+        ###
+        
+        """
+        all the lines in summary
+        
+        """
+        
+        # Ticker selected
+        h1 = QHBoxLayout()      
+        self.label_ticker = QLabel("Ticker : ")
         self.label_ticker.setFont(QFont(self.font, 12))
-        hbox1.addWidget(self.label_ticker)
+        self.display_ticker = QLabel(self.SelectedTicker)
+        self.display_ticker.setFont(QFont(self.font, 12))
+        h1.addWidget(self.label_ticker)
+        h1.addWidget(self.display_ticker)
         
-        self.edit_ticker = QLineEdit()
-        self.edit_ticker.setFont(QFont(self.font, 12))
-        hbox1.addWidget(self.edit_ticker)
+        # company name
+        h2 = QHBoxLayout()  
+        self.label_company = QLabel("Company name : ")
+        self.label_company.setFont(QFont(self.font, 12))
+        self.display_company = QLabel(self.SelectedCompany)
+        self.display_company.setFont(QFont(self.font, 12))
+        h2.addWidget(self.label_company)
+        h2.addWidget(self.display_company)
         
-        btn_editTick =  QPushButton("Search (Ctrl+S)")
-        btn_editTick.setFont(QFont(self.font, 12))
-        btn_editTick.clicked.connect(self.find_item) # linked to the find_item fct
-        btn_editTick.setShortcut("Ctrl+S")
-        hbox1.addWidget(btn_editTick)
+        # country
+        h22 = QHBoxLayout()  
+        self.label_country = QLabel("Country : ")
+        self.label_country.setFont(QFont(self.font, 12))
+        self.display_country = QLabel(self.SelectedCountry)
+        self.display_country.setFont(QFont(self.font, 12))
+        h22.addWidget(self.label_country)
+        h22.addWidget(self.display_country)
         
-        # For the display
-        self.listwidget = QListWidget()
-        self.total_list = self.alltickers["NameDisplay"].tolist()
-        self.listwidget.addItems(self.total_list)  
+        # Stock exchange
+        h23 = QHBoxLayout()  
+        self.label_exchange = QLabel("Exchange : ")
+        self.label_exchange.setFont(QFont(self.font, 12))
+        self.display_exchange = QLabel(self.SelectedExchange)
+        self.display_exchange.setFont(QFont(self.font, 12))
+        h23.addWidget(self.label_exchange)
+        h23.addWidget(self.display_exchange)
         
-        # used for the search
-        self.listwidget2 = QListWidget()
-        self.total_list2 = self.alltickers["NameAndTicker"].tolist()
-        self.listwidget2.addItems(self.total_list2)
+        # dividend yield
+        h24 = QHBoxLayout()  
+        self.label_dividend = QLabel("Dividend yield : ")
+        self.label_dividend.setFont(QFont(self.font, 12))
+        str_div = "{} %".format(str(round(self.div_yield*100,2)))
+        self.display_dividend = QLabel(str_div)
+        self.display_dividend.setFont(QFont(self.font, 12))
+        h24.addWidget(self.label_dividend)
+        h24.addWidget(self.display_dividend)
         
-        # buttons
-        hb = QHBoxLayout()
+        # option type
+        h25 = QHBoxLayout()  
+        self.label_option_type = QLabel("Option type : ")
+        self.label_option_type.setFont(QFont(self.font, 12))
+        self.display_option_type = QLabel(self.option_type)
+        self.display_option_type.setFont(QFont(self.font, 12))
+        h25.addWidget(self.label_option_type)
+        h25.addWidget(self.display_option_type)
         
+        # strike price
+        h3 = QHBoxLayout()  
+        self.label_strike = QLabel("Strike price : ")
+        self.label_strike.setFont(QFont(self.font, 12))
+        self.display_strike = QLabel(str(self.K))
+        self.display_strike.setFont(QFont(self.font, 12))
+        h3.addWidget(self.label_strike)
+        h3.addWidget(self.display_strike)
+        
+        # maturity
+        h32 = QHBoxLayout()  
+        self.label_maturity = QLabel("Maturity : ")
+        self.label_maturity.setFont(QFont(self.font, 12))
+        self.display_maturity = QLabel(T_display)
+        self.display_maturity.setFont(QFont(self.font, 12))
+        h32.addWidget(self.label_maturity)
+        h32.addWidget(self.display_maturity)
+        
+        # spot price
+        h4 = QHBoxLayout()  
+        self.label_spot = QLabel("Spot price : ")
+        self.label_spot.setFont(QFont(self.font, 12))
+        self.S0 = float(self.prices.iloc[-1,0]) # the last price
+        
+        self.display_spot = QLabel(str(round(self.S0,2)))
+        self.display_spot.setFont(QFont(self.font, 12))
+        h4.addWidget(self.label_spot)
+        h4.addWidget(self.display_spot)
+        
+        # volatility
+        h5 = QHBoxLayout()  
+        self.label_volatility = QLabel("Volatility : ")
+        self.label_volatility.setFont(QFont(self.font, 12))
+        str_vola = "{} %".format(str(round(self.vola*100, 2)))
+        self.display_volatility = QLabel(str_vola)
+        self.display_volatility.setFont(QFont(self.font, 12))
+        h5.addWidget(self.label_volatility)
+        h5.addWidget(self.display_volatility)
+        
+        # Option price
+        h6 = QHBoxLayout()  
+        self.label_option_price = QLabel("Option price : ")
+        self.label_option_price.setFont(QFont(self.font, 12))
+        self.display_option_price = QLabel() # defined in function
+        self.display_option_price.setFont(QFont(self.font, 12))
+        h6.addWidget(self.label_option_price)
+        h6.addWidget(self.display_option_price)
+    
+        # buttons to compute the option price and export dataframe
+        h7 = QHBoxLayout() 
+        self.button_compute = QPushButton("Compute")
+        self.button_compute.setFont(QFont(self.font, 18))
+        self.button_compute.clicked.connect(self.compute) # function
+    
+        self.button_export = QPushButton("Export")
+        self.button_export.setFont(QFont(self.font, 18))
+        self.button_export.clicked.connect(self.export) # function
+        h7.addWidget(self.button_compute)
+        h7.addWidget(self.button_export)
+   
         self.Prev = QPushButton("Prev")
         self.Prev.setFont(QFont(self.font, 18))
-        hb.addWidget(self.Prev)
-    
-        self.button = QPushButton("Save company")
-        self.button.clicked.connect(self.display) # display function
-        self.button.setFont(QFont(self.font, 18))
-        hb.addWidget(self.button)
         
-        self.Next = QPushButton('Next')
-        self.Next.setEnabled(False) # while ticker not selected, button not enabled
-        self.Next.setFont(QFont(self.font, 18))
-        hb.addWidget(self.Next)
+        # combine all these lines in a vertical layout
+        window4_vbox = QVBoxLayout()
+        window4_vbox.addLayout(h1)
+        window4_vbox.addLayout(h2)
+        window4_vbox.addLayout(h22)
+        window4_vbox.addLayout(h23)
+        window4_vbox.addLayout(h24)
+        window4_vbox.addLayout(h25)
+        window4_vbox.addLayout(h3)
+        window4_vbox.addLayout(h32)
+        window4_vbox.addLayout(h4)
+        window4_vbox.addLayout(h5)
+        window4_vbox.addLayout(h6)
+
+
+        ####
+        # Tab widget
+        # first tab : option pricing
+        # second tab : chart of the price
         
-        # integrate all horizontal layers in a vertical layer
-        auto_search_vbox = QVBoxLayout(self)
-        auto_search_vbox.addLayout(hbox1)
-        auto_search_vbox.addWidget(self.listwidget) # ticker list
-        auto_search_vbox.addLayout(hb)
-   
-        # mandatory conversion in order to display the content
+        self.tabs = QTabWidget()
+        self.tab1 = QWidget()
+        self.tab2 = QWidget()
+        
+        self.tabs.addTab(self.tab1,"Option pricing")
+        self.tabs.addTab(self.tab2,"Chart")
+        
+        self.tab1.setLayout(window4_vbox)
+        
+        self.sc = MplCanvas(self, width=5, height=4, dpi=100) # canvas
+        
+        self.prices[self.SelectedTicker].plot(ax=self.sc.axes, title=self.SelectedCompany) # chart
+        toolbar = NavigationToolbar(self.sc, self.tab1) # toolbar for the chart
+
+        layout = QVBoxLayout()
+        layout.addWidget(toolbar)
+        layout.addWidget(self.sc)
+        widget_chart = QWidget()
+        widget_chart.setLayout(layout)
+        self.tab2.setLayout(layout)
+        
+        self.layout = QVBoxLayout()
+        self.layout.addWidget(self.tabs)
+        self.layout.addLayout(h7) # compute, export
+        self.layout.addWidget(self.Prev)
+        
+        ####
         self.widget = QWidget()
-        self.widget.setLayout(auto_search_vbox)
+        self.widget.setLayout(self.layout)
         MainWindow.setCentralWidget(self.widget)
         
         
-    def find_item(self):
-        """ find edit.text in dataframe """
-  
-        # occurences in listwidget2 for the search edit_ticker (upper)
-        out = self.listwidget2.findItems(self.edit_ticker.text().upper(), 
-                                        Qt.MatchContains |          # +++
-                                        Qt.MatchCaseSensitive)      # +++
+    def price_generator(self, start, end, periods):
+        """ generate daily prices and returns from yahoo """
+        tickers = [self.SelectedTicker]
+        tick_yahoo = YahooFinancials(tickers)
+        data = tick_yahoo.get_historical_price_data(start, 
+                                                     end, 
+                                                     periods)
         
-        list_display = [ i.text() for i in out ] # list with all the occurences
+        df = pd.DataFrame({
+            a: {x['formatted_date']: x['adjclose'] for x in data[a]['prices']} for a in tickers})
         
-        # links the list values to the dataframe rows
-        part = self.alltickers.loc[self.alltickers["NameAndTicker"] == list_display[0]]
-        for i in range(1, len(list_display)):
-            part = part.append(self.alltickers.loc[self.alltickers["NameAndTicker"] == list_display[i]])
-    
-        # conversion to list in order to display the results
-        partList = part["NameDisplay"].tolist()
+        self.prices = df.dropna()
+        self.returns = self.prices.pct_change().dropna()
+        try:
+            self.div_yield = tick_yahoo.get_dividend_yield()
+            #print(self.div_yield[self.SelectedTicker])
+            if self.div_yield[self.SelectedTicker] == None:
+                self.div_yield = 0.00
+            else:
+                self.div_yield = self.div_yield[self.SelectedTicker]
+        except:
+            print("no dividend yield")
+        
+        
+    def compute(self):
+        """ run the monte-carlo simulation
+        or the Black and Scholes function
+        we use a risk-free rate of 1.6% which is the yield of a 10Y treasury on may 2021 """
+        
+        if self.option_type == "European call":
+            option_price = BS_call(self.S0, self.K, self.T_scaled, self.vola, self.div_yield, r=self.rf)
+        
+        elif self.option_type == "European put":
+            option_price = BS_put(self.S0, self.K, self.T_scaled, self.vola, self.div_yield,  r=self.rf)
+        
+        elif self.option_type ==  "Asian call":
+            option_price = monte_carlo_call(self.S0, self.K, self.T_scaled, self.vola, self.div_yield, rf=self.rf ) # function in other file
+        else:
+            # Asian put
+            option_price = monte_carlo_put(self.S0, self.K, self.T_scaled, self.vola, self.div_yield, rf=self.rf)
+        
 
-        self.listwidget.clear() # clear the list displayed
-        self.listwidget.addItems(partList) # display the new list generated
+        self.display_option_price.setText(str(round(option_price,2)))
+        self.display_option_price.adjustSize()
         
+    def export(self):
+        """ export the dataframe to excel file """
+        self.prices["returns"] = self.returns
+        self.prices.columns = ['prices', 'returns']
+        self.prices = self.prices.dropna()
         
+        name = QFileDialog.getSaveFileName(None, 'Save File', filter='*.xlsx')
+        if(name[0] == ''):
+            # if name empty
+            pass
+        else:
+            self.prices.to_excel(name[0])   
         
-    def display(self):
-        """ save the ticker and set the button enabled """
-        
-        SelectedTick = self.listwidget.selectedItems() # line selected
-        x = []
-        for i in list(SelectedTick):
-            x.append(str(i.text())) # get the element, str type in list
-            
-        # from the line selected, get the ticker    
-        tick = self.alltickers.loc[self.alltickers["NameDisplay"] == x[0]]
-        tick = tick.index[0]
- 
-        self.SelectedTicker = tick # add the ticker to the class
-        self.SelectedCompany = self.alltickers["Name"][tick] # company name
-        self.SelectedCountry = self.alltickers["Country"][tick] # company's country
-        self.SelectedExchange = self.alltickers["Exchange"][tick] # company's exchange
 
-        if len(self.SelectedTicker) > 0:
-            # if the line selected is not empty
-            self.Next.setEnabled(True) # allow the user to click on "next"
+class MplCanvas(FigureCanvasQTAgg):
+
+    def __init__(self, parent=None, width=5, height=4, dpi=100):
+        fig = Figure(figsize=(width, height), dpi=dpi)
+        self.axes = fig.add_subplot(111)
+        super(MplCanvas, self).__init__(fig)
     
